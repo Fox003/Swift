@@ -1,0 +1,633 @@
+import SwiftUI
+import CoreBluetooth
+
+////////////////////////////// BLUETOOTH OF THE APP ////////////////////////
+
+var words = ["controller", "sun.dust", "moon", "cpu", "sun.haze", "sun.max", "hourglass", "leaf"]
+var txChar : CBCharacteristic?
+var periph : CBPeripheral?
+var connected = false
+
+class BluetoothViewController: UIViewController, ObservableObject {
+    private var centralManager: CBCentralManager!
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .blue
+        centralManager = CBCentralManager(delegate: self, queue: nil)
+    }
+    
+    @Published var discoveredPeripherals = [CBPeripheral]()
+    func startScan() {
+        centralManager.scanForPeripherals(withServices: nil, options: nil)
+    }
+    
+    var connectedPeripheral: CBPeripheral?
+    func connect(peripheral: CBPeripheral) {
+        let deviceName = peripheral.name ?? "device"
+        print("connecting to..." + deviceName)
+        centralManager.connect(peripheral, options: nil)
+        periph = peripheral
+        print("PERIPH AFTER CONNECTION")
+        print(periph!)
+    }
+    
+    func disconnect(peripheral: CBPeripheral) {
+        centralManager.cancelPeripheralConnection(peripheral)
+    }
+    
+    func discoverDescriptors(peripheral: CBPeripheral, characteristic: CBCharacteristic) {
+        peripheral.discoverDescriptors(for: characteristic)
+    }
+    
+    func write(value: Data, characteristic: CBCharacteristic) {
+        if (self.connectedPeripheral == nil){
+            print("con was nil")
+            self.connectedPeripheral = periph
+            self.connectedPeripheral?.writeValue(value, for: characteristic, type: .withResponse)
+            // OR
+            self.connectedPeripheral?.writeValue(value, for: characteristic, type: .withoutResponse)
+        } else {
+            self.connectedPeripheral = periph
+            print(self.connectedPeripheral!)
+            self.connectedPeripheral?.writeValue(value, for: characteristic, type: .withResponse)
+            // OR
+            self.connectedPeripheral?.writeValue(value, for: characteristic, type: .withoutResponse)
+        }
+    }
+    
+    // Call after connecting to peripheral
+    func discoverServices(peripheral: CBPeripheral) {
+        peripheral.discoverServices(nil)
+    }
+    
+    // Call after discovering services
+    func discoverCharacteristics(peripheral: CBPeripheral) {
+        guard let services = peripheral.services else {
+            return
+        }
+        for service in services {
+            print(peripheral.discoverCharacteristics(nil, for: service))
+        }
+    }
+}
+
+
+extension BluetoothViewController: CBCentralManagerDelegate {
+    
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        switch central.state {
+        case .poweredOn:
+            discoveredPeripherals.removeAll()
+            print("scanning for devices")
+            if (self.connectedPeripheral != nil || periph != nil){
+                self.connectedPeripheral = nil
+                periph = nil
+            }
+            startScan()
+        case .poweredOff:
+            // Alert user to turn on Bluetooth
+            print("Turn on Bluetooth pls")
+        case .resetting:
+            // Wait for next state update and consider logging interruption of Bluetooth service
+            print("Waiting...")
+        case .unauthorized:
+            // Alert user to enable Bluetooth permission in app Settings
+            print("Enable Bluetooth permissions pls")
+        case .unsupported:
+            // Alert user their device does not support Bluetooth and app will not work as expected
+            print("Bluetooth is not supported")
+        case .unknown:
+            // Wait for next state update
+            print("Waiting...")
+        default:
+            print("I have no idea what the hell happened") 
+        }
+    }
+    
+    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String : Any], rssi RSSI: NSNumber) {
+        if !self.discoveredPeripherals.contains(peripheral){
+            self.discoveredPeripherals.append(peripheral)
+        }
+    }
+    
+    func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        print("Failed to connect to device")
+    }
+    
+    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        if (error != nil) {
+            // Handle error
+            return
+        }
+        // Successfully disconnected
+        periph = nil
+        print("Successfully disconnected from device")
+    }
+    
+    func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        self.connectedPeripheral = peripheral
+        peripheral.delegate = self
+        discoverServices(peripheral: peripheral)
+        connected = true
+        print("succesfully connected to device: " + (self.connectedPeripheral?.name)!)
+    }
+}
+
+extension BluetoothViewController : CBPeripheralDelegate {
+    
+    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let error = error {
+            // Handle error
+            return
+        }
+    }
+    
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        guard let services = peripheral.services else {
+            return
+        }
+        discoverCharacteristics(peripheral: peripheral)
+    }
+    
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        guard let characteristics = service.characteristics else {
+            return
+        }
+        discoverDescriptors(peripheral: peripheral, characteristic: characteristics[0])
+        txChar = characteristics[0]
+        
+        // Consider storing important characteristics internally for easy access and equivalency checks later.
+        // From here, can read/write to characteristics or subscribe to notifications as desired.
+    }
+    
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverDescriptorsFor characteristic: CBCharacteristic, error: Error?) {
+        guard let descriptors = characteristic.descriptors else { return }
+        
+        // Get user description descriptor
+        if let userDescriptionDescriptor = descriptors.first(where: {
+            return $0.uuid.uuidString == CBUUIDCharacteristicUserDescriptionString
+        }) {
+            // Read user description for characteristic
+            peripheral.readValue(for: userDescriptionDescriptor)
+        }
+    }
+    
+    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor descriptor: CBDescriptor, error: Error?) {
+        // Get and print user description for a given characteristic
+        if descriptor.uuid.uuidString == CBUUIDCharacteristicUserDescriptionString,
+           let userDescription = descriptor.value as? String {
+            print("Characterstic \(descriptor.characteristic?.uuid.uuidString ?? "null") is also known as \(userDescription)")
+        }
+        
+    }
+}
+
+/////////////////////////// UI OF THE APP /////////////////////////////////
+
+
+class AlertController : UIViewController {
+    override func viewDidLoad() {
+        print("hello")
+    }
+    
+    @IBAction func didTapButton() {
+        showAlert(message: "Hello", title: "lol")
+    }
+    
+    func showAlert (message: String, title: String) {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        
+        alert.addAction(UIAlertAction(title: "Dismiss", style: .cancel, handler: { action in 
+            print("tapped dismiss")
+        }))
+        
+        present(alert, animated: true)
+    }
+    
+}
+
+struct ContentView: View {
+    @State var showingSheet = false
+    
+    var body: some View {
+        TabView {
+            robotController(showingSheet: $showingSheet)
+                .tabItem{
+                    //Label("Robot", systemImage: "cpu")
+                    Image(systemName: "cpu")
+                }
+            about()
+                .tabItem{
+                    //Label("About", systemImage: "info")
+                    Image(systemName: "music.note")
+                }
+            
+            settings()
+                .tabItem{
+                    //Label("Settings", systemImage: "gear")
+                    Image(systemName: "gear")
+            }
+        }
+        .sheet(isPresented: $showingSheet){
+            peripheralsView()
+        }
+}
+}
+
+struct peripheralsView : View {
+    @ObservedObject var BLVC = BluetoothViewController()
+    @State private var isShown = false
+    
+    var body: some View {
+        NavigationView {
+            List(BLVC.discoveredPeripherals, id: \.self) {
+                peripheral in 
+                if (peripheral.name != nil) {
+                    Button(peripheral.name ?? "unnamed device"){
+                        if (periph != nil) {
+                            BLVC.disconnect(peripheral: periph!)
+                            periph = nil
+                            print("disconnecting the earlier device")
+                        }
+                        let indexOf = BLVC.discoveredPeripherals.firstIndex(of: peripheral)
+                        //connect to device
+                        BLVC.connect(peripheral: BLVC.discoveredPeripherals[indexOf!])
+                        BLVC.connectedPeripheral = BLVC.discoveredPeripherals[indexOf!]
+                        print(BLVC.connectedPeripheral!)
+                        isShown = true
+                    }
+                    .alert("Connected to device", isPresented: $isShown) {
+                        Button("OK", role: .cancel) {}
+                    }
+                }
+            }
+            .animation(.easeIn)
+            .navigationTitle("Peripherals")
+            .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                BLVC.viewDidLoad()
+                BLVC.discoveredPeripherals.removeAll()
+                connected = false
+            }
+        }
+    }
+}
+
+struct robotController : View {
+    @ObservedObject var BLVC = BluetoothViewController()
+    @Binding var showingSheet: Bool
+    
+    var data: [Int] = Array(1...20)
+    let layout = [GridItem(.adaptive(minimum: 170)), GridItem(.adaptive(minimum: 170))]
+    
+    var body: some View {
+        NavigationView {
+            ScrollView(.vertical) {
+                LazyVGrid (columns: layout, spacing: 15) {
+                    ZStack{
+                        //////////////////////////// BUTTON 1 ////////////////////////////
+                        Button (action: { 
+                            if (connected == false) {
+                                print("YOU ARE NOT CONNECTED TO A DEVICE")
+                            }
+                            else {
+                                BLVC.write(value: Data("A".utf8), characteristic: txChar!)
+                            }
+                        }){
+                            Rectangle()
+                                .fill(LinearGradient(colors: [.blue, .cyan], startPoint: .top, endPoint: .trailing))
+                                .cornerRadius(10)
+                                .frame(width: 150, height: 150)
+                                .shadow(radius: 5)
+                        }
+                        VStack {
+                            Image(systemName: "gamecontroller")
+                            Text("ON")
+                                .shadow(radius: 1)
+                        }
+                    }
+                    
+                    //////////////////////////// BUTTON 2 ////////////////////////////
+                    ZStack {
+                        Button (action: { 
+                            if (connected == false) {
+                                print("YOU ARE NOT CONNECTED TO A DEVICE")
+                            }
+                            else {
+                                BLVC.write(value: Data("B".utf8), characteristic: txChar!)
+                            }
+                        }){
+                            Rectangle()
+                                .fill(LinearGradient(colors: [.red, .orange], startPoint: .top, endPoint: .trailing))
+                                .cornerRadius(10)
+                                .frame(width: 150, height: 150)
+                                .shadow(radius: 5)
+                        }
+                        VStack {
+                            Image(systemName: "car")
+                            Text("OFF")
+                                .shadow(radius: 1)
+                        }
+                    }
+                    
+                    //////////////////////////// BUTTON 3 ////////////////////////////
+                    ZStack {
+                        Button (action: { 
+                            if (connected == false) {
+                                print("YOU ARE NOT CONNECTED TO A DEVICE")
+                            }
+                            else {
+                                print("WRITING VALUE")
+                                BLVC.write(value: Data("X".utf8), characteristic: txChar!)
+                            }
+                        }){
+                            Rectangle()
+                                .fill(LinearGradient(colors: [.pink, .purple], startPoint: .top, endPoint: .trailing))
+                                .cornerRadius(10)
+                                .frame(width: 150, height: 150)
+                                .shadow(radius: 5)
+                        }
+                        VStack {
+                            Image(systemName: "arrow.down")
+                            Text("SIT")
+                                .shadow(radius: 1)
+                        }
+                    }
+                    
+                    //////////////////////////// BUTTON 4 ////////////////////////////
+                    ZStack {
+                        Button (action: { 
+                            if (connected == false) {
+                                print("YOU ARE NOT CONNECTED TO A DEVICE")
+                            }
+                            else {
+                                print(txChar!)
+                                BLVC.write(value: Data("Z".utf8), characteristic: txChar!)
+                            }
+                        }){
+                            Rectangle()
+                                .fill(LinearGradient(colors: [.red, .orange], startPoint: .top, endPoint: .trailing))
+                                .cornerRadius(10)
+                                .frame(width: 150, height: 150)
+                                .shadow(radius: 5)
+                        }
+                        VStack {
+                            Image(systemName: "")
+                            Text("AU PIED")
+                                .shadow(radius: 1)
+                        }
+                    }
+                    
+                    //////////////////////////// BUTTON 5 ////////////////////////////
+                    ZStack {
+                        Button (action: { 
+                            BLVC.write(value: Data("M".utf8), characteristic: txChar!)
+                        }){
+                            Rectangle()
+                                .fill(LinearGradient(colors: [.green, .mint], startPoint: .top, endPoint: .trailing))
+                                .cornerRadius(10)
+                                .frame(width: 150, height: 150)
+                                .shadow(radius: 5)
+                        }
+                        VStack {
+                            Image(systemName: "heart.fill")
+                            Text("sick move")
+                                .shadow(radius: 1)
+                        }
+                    }
+                    
+                    //////////////////////////// BUTTON 5 ////////////////////////////
+                    ZStack {
+                        Button (action: { 
+                            BLVC.write(value: Data("S".utf8), characteristic: txChar!)
+                        }){
+                            Rectangle()
+                                .fill(LinearGradient(colors: [.green, .mint], startPoint: .top, endPoint: .trailing))
+                                .cornerRadius(10)
+                                .frame(width: 150, height: 150)
+                                .shadow(radius: 5)
+                        }
+                        VStack {
+                            Image(systemName: "heart.fill")
+                            Text("Spinny move")
+                                .shadow(radius: 1)
+                        }
+                    }
+                }
+            }
+            .toolbar{
+                ToolbarItem(placement: .confirmationAction){
+                    NavigationLink(destination: peripheralsView()) {
+                        Image(systemName: "externaldrive.fill.badge.wifi")
+                    }
+                }
+                
+                ToolbarItem(placement: .cancellationAction) {
+                    NavigationLink(destination: lightSettings()) {
+                        Image(systemName: "lightbulb.fill")
+                    }
+                }
+            }
+            .navigationTitle("Robot utilities")
+            .navigationBarTitleDisplayMode(.inline)
+            
+        }
+    }
+}
+
+struct about : View {
+    @State var isPlaying = false
+    @ObservedObject var BLVC = BluetoothViewController()
+    var body: some View {
+        VStack{
+            Text("ROBUS AUDIO PLAYER")
+                .font(.headline)
+            Image("NoteIcon")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 200, height: 200)
+                .clipped()
+                .cornerRadius(10)
+                .shadow(color: .gray ,radius: 4)
+            HStack {
+                Button(action: {
+                    //Go to previous song
+                    BLVC.write(value: Data("R".utf8), characteristic: txChar!)
+                }){
+                    Image(systemName: "arrow.backward.circle.fill")
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 50, height: 50)
+                }
+                .padding()
+                
+                Button(action: {
+                    if(isPlaying == true) {
+                        //Pause the song
+                        BLVC.write(value: Data("A".utf8), characteristic: txChar!)
+                    }
+                    else{
+                        //Resume the song
+                        BLVC.write(value: Data("P".utf8), characteristic: txChar!)
+                    }
+                    isPlaying.toggle()
+                }){
+                    if(isPlaying == true) {
+                        Image(systemName: "pause.circle.fill")
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 75, height: 75)
+                    }
+                    else{
+                        Image(systemName: "play.circle.fill")
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 75, height: 75)
+                    }
+                }
+                
+                Button(action: {
+                    //Go to next song
+                    BLVC.write(value: Data("N".utf8), characteristic: txChar!)
+                }){
+                    Image(systemName: "arrow.right.circle.fill")
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 50, height: 50)
+                }
+                .padding()
+            }
+            .padding()
+            
+            HStack {
+                Button(action: {
+                    //crank down the volume
+                    BLVC.write(value: Data("D".utf8), characteristic: txChar!)
+                }){
+                    Image(systemName: "speaker.wave.1.fill")
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 25, height: 25)
+                }
+                .padding()
+                
+                Button(action: {
+                    //crank up the volume
+                    BLVC.write(value: Data("U".utf8), characteristic: txChar!)
+                }){
+                    Image(systemName: "speaker.wave.3.fill")
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 25, height: 25)
+                }
+                .padding()
+            }
+        }
+    }
+}
+
+struct lightSettings: View {
+    @ObservedObject var BLVC = BluetoothViewController()
+    @State var isRedOn = false
+    @State var isGreenOn = false
+    @State var isBlueOn = false
+    @State var isMotorOn = false
+    var body: some View {
+        NavigationView{
+            ScrollView (.vertical){
+                Toggle("Red", isOn: $isRedOn)
+                    .padding()
+                Toggle("Green", isOn: $isGreenOn)
+                    .padding()
+                Toggle("Blue", isOn: $isBlueOn)
+                    .padding()
+                Toggle("Motor", isOn: $isMotorOn)
+                    .padding()
+                Button("Reset all"){
+                    BLVC.write(value: Data("0".utf8), characteristic: txChar!)
+                }
+            }
+            .navigationTitle("Light settings")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        
+        if (isRedOn){
+            BLVC.write(value: Data("1".utf8), characteristic: txChar!)
+        }
+        if (isGreenOn){
+            BLVC.write(value: Data("2".utf8), characteristic: txChar!)
+        }
+        if (isBlueOn){
+            BLVC.write(value: Data("3".utf8), characteristic: txChar!)
+        }
+        if (isMotorOn){
+            BLVC.write(value: Data("4".utf8), characteristic: txChar!)
+        }
+        if (isRedOn){
+            BLVC.write(value: Data("1".utf8), characteristic: txChar!)
+        }
+    }
+}
+
+struct settings: View {
+    @State var isDarkMode = true 
+    @State private var isOn = false
+    
+    var body: some View {
+        
+        NavigationView {
+            VStack {
+                    Toggle("Switch", isOn: $isOn)
+                        .toggleStyle(.switch)
+                        .padding()
+                        .background(.gray)
+                        .cornerRadius(5)
+            }
+            
+                .navigationBarTitleDisplayMode(.inline)
+                .navigationTitle("Settings")
+                .toolbar{
+                    Button(action: {
+                        isDarkMode.toggle()
+                    }){
+                        if (!isDarkMode) {
+                            Image(systemName: "moon")
+                        } else {
+                            Image(systemName: "sun.max")
+                        }
+                    }
+                }
+        }
+        .preferredColorScheme(isDarkMode ? .dark : .light)
+        
+    }
+}
+
+struct Loader: View {
+    @State var animate = false
+    
+    var body: some View{
+        VStack{
+            Circle()
+                .trim(from: 0, to: 0.8)
+                .stroke(AngularGradient(gradient: .init(colors: [.orange, .red]), center: .center), style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                .frame(width: 45, height: 45)
+                .rotationEffect(.init(degrees: self.animate ? 360 : 0))
+                .animation(Animation.linear(duration:0.7).repeatForever(autoreverses: false))
+            Text("connecting...").padding(.top)
+        }
+        .padding(20)
+        .background(Color.white)
+        .cornerRadius(15)
+        .onAppear {
+            self.animate.toggle()
+        }
+    }
+}
+
+struct _Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+    }
+}
